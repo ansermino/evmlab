@@ -108,6 +108,11 @@ SWAP13 = 0x9c
 SWAP14 = 0x9d
 SWAP15 = 0x9e
 SWAP16 = 0x9f
+# Custom Codes
+TOPOINT = 0x21
+GETATTEST = 0xe0
+GETREVOKE = 0xe1
+CHECKATTESTVALID = 0xe2
 
 import sys
 
@@ -164,6 +169,11 @@ class Program():
 		self.jump        = lambda label : self.push(label).op(JUMP)
 		self.jumpi        = lambda label,cond : self.push(cond).push(label).op(JUMPI)
 		self.revert      = lambda  memStart, memSize: self.push(memSize).push(memStart).op(REVERT)
+		# Custom codes
+		self.topoint = lambda a: self.push(a).op(TOPOINT)
+		self.getattest = lambda x,y: self.push(y).push(x).op(GETATTEST)
+		self.getrevoke = lambda x,y: self.push(y).push(x).op(GETREVOKE)
+		self.checkattestvalid = lambda x,y: self.push(y).push(x).op(CHECKATTESTVALID)
 
 		
 	def _add(self, x):
