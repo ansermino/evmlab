@@ -13,10 +13,7 @@ p.getrevoke(1,2)
 p.checkattestvalid(1,2)
 #p.sload(0)
 
-# push * 7
-# 137 + 137 + 20
-# Compute gas values
-# TODO: Implement computation
+
 start_gas = 2000 #1000
 end_gas = (start_gas - 3 - 3 -3 - 137 -3 - 3 - 137 -3 -3 -20)
 
