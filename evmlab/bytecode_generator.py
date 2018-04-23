@@ -2,20 +2,16 @@ import compiler
 import json_template
 import json
 
-TESTFILE_PATH = '../../chainsafe/shyft_ethereumjs-vm/tests/localTests/example2.json'
+TESTFILE_PATH = './test-file.json'
 
 
 # Construct bytecode
 p = compiler.Program()
-p.topoint(1)
-p.getattest(1,2)
-p.getrevoke(1,2)
-p.checkattestvalid(1,2)
-#p.sload(0)
+p.getattest(1, 2)
 
 
-start_gas = 2000 #1000
-end_gas = (start_gas - 3 - 3 -3 - 137 -3 - 3 - 137 -3 -3 -20)
+start_gas = 2000
+end_gas = (start_gas - 3)
 
 
 # Write to file
