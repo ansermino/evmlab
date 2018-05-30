@@ -1,6 +1,9 @@
-from ethereum.utils import decode_hex, remove_0x_head, bytearray_to_bytestr, encode_hex
 from copy import copy
 import collections
+import binascii
+
+from . import parse_int_or_hex,decode_hex,remove_0x_head,bytearray_to_bytestr,encode_hex
+
 # Taken from https://github.com/ethereum/pyethereum/blob/develop/ethereum/opcodes.py
 # Done this way to reduce dependencies a bit
 # schema: [opcode, ins, outs, gas]
