@@ -58,6 +58,65 @@ web3settings = parser.add_argument_group('Web3', 'Settings about where to fetch 
 web3settings.add_argument("--web3", type=str, default="https://mainnet.infura.io/",
                           help="Web3 API url to fetch info from (default 'https://mainnet.infura.io/'")
 
+def getMemoryReference(opcode):
+
+# opcodes with memory references:
+# CALLDATACOPY, CODECOPY, EXTCODECOPY, RETURNDATACOPY, MLOAD, MSTORE*
+# LOG*, CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, STATICCALL, REVERT
+# format of mem_opcodes dict is [[mem_offset, data_size], default]
+
+    mem_opcodes = {
+        0x37 : [0, 2],
+        0x39 : [0, 2],
+        0x3c : [1, 3],
+        0x3e : [0, 2],
+        0x51 : [0, -1, 32],
+        0x52 : [0, -1, 32],
+        0x53 : [0, -1, 1],
+        0xa0 : [0, 1],
+        0xa1 : [0, 1],
+        0xa2 : [0, 1],
+        0xa3 : [0, 1],
+        0xa4 : [0, 1],
+        0xf0 : [1, 2],
+        0xf1 : [3, 4],
+        0xf2 : [3, 4],
+        0xf3 : [0, 1],
+        0xf4 : [2, 3],
+        0xfa : [2, 3],
+        0xfd : [0, 1]
+    }
+
+    if opcode in mem_opcodes.keys():
+        e = mem_opcodes[opcode]
+        return e
+    else:
+        return -1
+
+def memRefResolve(mem, refs, st, msg, opname, oplimit):
+        append = ""
+        st = st[::-1]
+        mem = mem[2:]
+        mrefs = [0, 0]
+        mrefs[0] = int(st[refs[0]], 16)
+        if (refs[1] == -1):
+            mrefs[1] = refs[2]
+        else:
+            mrefs[1] = int(st[refs[1]], 16)
+        if oplimit > 0 and mrefs[1] > oplimit:
+            mrefs[1] = oplimit
+            append = "..."
+        if mrefs[1] < 0 or mrefs[0] < 0 or mrefs[0] > len(mem)/2:
+            mrefs = [0, 0]
+            append = " - memory access beyond expansion"
+        if (mrefs[0] + mrefs[1]) > len(mem)/2:
+            mrefs[1] = len(mem/2) - mrefs[0]
+            append = " - attempted read beyond memory bound of %d bytes" % (mrefs[0] + mrefs[1] - len(mem/2))
+        return msg + " " + opname + " memory ref:\n" + "0x" + "".join(mem[(mrefs[0]*2):(mrefs[0]+mrefs[1])*2]) + append + "\n"
+
+def dumpArea(f, name, content):
+        f.write(name + "\n\n")
+        f.write(content + "\n\n")
 
 def getStackAnnotations(opcode):
     """ 
@@ -357,16 +416,12 @@ def opSource(c, opcode, srcptr, track=True, length=12):
         end = start + code_pos[1]
         code = contract[start:end]
 
-        if start == end:
-            txt = contract
-        else:
-            txt = contract[:start] + "**" + code + "**" + contract[end:]
-
         # determine which line the code is on
-        start_code_line = len(re.findall(NEWLINE_PATTERN, txt[:start]))
+        start_code_line = len(re.findall(NEWLINE_PATTERN, contract[:start]))
+        # num of lines of code
         code_lines = len(re.findall(NEWLINE_PATTERN, code)) + 1
 
-        split = txt.splitlines()
+        split = contract.splitlines()
 
         if track:
             if start_code_line == 0 or code_lines >= length:
@@ -385,23 +440,34 @@ def opSource(c, opcode, srcptr, track=True, length=12):
             view = split[srcptr: srcptr + length]
 
         viewtxt = "\n".join(view)
-        viewtxt_split = viewtxt.split('**')
 
-        if len(viewtxt_split) == 1:
-            # entire view is the current code
-            viewtxt = viewtxt_split
-            viewtxt_split[0] = ('source', viewtxt_split[0])
-        elif len(viewtxt_split) == 2:
-            # part of the view is the current code
-            viewtxt = viewtxt_split
-            if viewtxt[0].strip() == '':
-                viewtxt_split[1] = ('source', viewtxt_split[1])
+        # highlight the current code in the view
+
+        # determine the code start offset for the view
+        code_start_offset = start - len("\n".join(split[:srcptr])) - 1
+        code_end_offset = code_start_offset + code_pos[1]
+        if (code_start_offset <= 0):
+            # current code starts before the view
+            if (code_end_offset < 0):
+                # current code is before the view
+                pass
+            elif (code_end_offset > len(viewtxt)):
+                # entire view is current code
+                viewtxt = [('source', viewtxt)]
             else:
-                viewtxt_split[0] = ('source', viewtxt_split[0])
-        elif len(viewtxt_split) == 3:
-            # current code is a slice of the view
-            viewtxt = viewtxt_split
-            viewtxt_split[1] = ('source', viewtxt_split[1])
+                # first part of view is current code
+                viewtxt = [('source', viewtxt[:code_end_offset]), viewtxt[code_end_offset:]]
+        else:
+            # current code starts within or after the view
+            if (code_start_offset > len(viewtxt)):
+                # current code is after the view
+                pass
+            elif (code_end_offset > len(viewtxt)):
+                # second part of view is current code
+                viewtxt = [viewtxt[:code_start_offset], ('source', viewtxt[code_start_offset:])]
+            else:
+                # current code is within the current view
+                viewtxt = [viewtxt[:code_start_offset], ('source', viewtxt[code_start_offset:code_end_offset]), viewtxt[code_end_offset:]]
 
         return srcptr, viewtxt
     else:
@@ -419,24 +485,24 @@ class DebugViewer():
         self.opptr = 0
         self.srcptr = 0
         self.srctrack = True
-        self.forward = True
-        self.step = 1
+        self.snapn = 0
 
         self.ops_view = None
         self.mem_view = None
+        self.memref_view = None
         self.stack_view = None
         self.trace_view = None
         self.source_view = None
         self.help_view = None
 
 
-    def setTrace(self, trace, contract_stack):
+    def setTrace(self, trace, op_contracts=[]):
         self.operations = trace
-        self.contract_stack = contract_stack
-        self.cptr = 0
+        self.op_contracts = op_contracts
 
         ops_view   = urwid.Text(self.getOp())
         mem_view   = urwid.Text(self.getMem())
+        memref_view  = urwid.Text(self.getMemref())
         stack_view = urwid.Text(self.getStack())
         trace_view = urwid.Text(self.getTrace())
         source_view = urwid.Text(self.getSource())
@@ -456,6 +522,7 @@ class DebugViewer():
 
         self.ops_view = ops_view
         self.mem_view = mem_view
+        self.memref_view = memref_view
         self.stack_view = stack_view
         self.trace_view = trace_view
         self.source_view = source_view
@@ -469,6 +536,7 @@ class DebugViewer():
                                 ),
                             urwid.Pile([
                                 wrap(mem_view,"Memory"),
+                                wrap(memref_view, "Memory Reference by Opcode"),
                                 wrap(stack_view, "Stack"),
                                 wrap(source_view, "Source"),
                                 ])
@@ -512,7 +580,11 @@ class DebugViewer():
 
 
     def getOp(self):
-        addr = self.contract_stack[self.cptr].address if self.cptr < len(self.contract_stack) else None
+        addr = None
+        if (len(self.op_contracts) > 0):
+            c = self.op_contracts[self.opptr]
+            addr = "{} ({})".format(c.address, c.name.split(':')[-1])
+        
         return opDump(self._op(default={'pc':1}), addr)
 
     def getMem(self):
@@ -523,6 +595,22 @@ class DebugViewer():
         if type(prev_m) is list:
             prev_m = "0x%s" % "".join(prev_m)
         return hexdump(m[2:], start = self.memptr, prevsrc = prev_m[2:])
+
+    def _getMemref(self, bound):
+        m = self._op('memory',[])
+        mc = ""
+        mc_prev = ""
+        ms = getMemoryReference(self._op('op', "0"))
+        ms_prev = getMemoryReference(self._prevop('op', "0"))
+        if type (ms) is list:
+            mc = memRefResolve(m, ms, self._op('stack', []), "Pre-exec", self._op('opName', 'op'), bound)
+        if type (ms_prev) is list:
+            mc_prev = memRefResolve(m, ms_prev, self._prevop('stack', []), "Post-exec", self._prevop('opName', 'op'), bound)
+        return mc+mc_prev
+
+    def getMemref(self):
+        return self._getMemref(256)
+        
 
     def getStack(self):
         st = self._op('stack',[])
@@ -543,48 +631,42 @@ class DebugViewer():
         return opTrace(ops = ops, sel = sel, offset = start)
 
     def getSource(self, track=None):
-        op = self.operations[self.opptr]
 
-        if len(self.contract_stack) == 0:
+        if len(self.op_contracts) == 0:
             return "No Source Provided"
+
+        op = self.operations[self.opptr]
 
         if 'depth' not in op:
             return ""
 
-        prev_op = self.operations[self.opptr - self.step] if self.forward else self.operations[self.opptr + self.step]
-        prev_d = prev_op['depth'] if 'depth' in prev_op else None
-
-        if prev_d is not None and prev_d != op['depth']:
-            self.srcptr = 0
-            if self.forward:
-                self.cptr += 1
-            else:
-                 self.cptr -= 1
-
-        if not self.contract_stack[self.cptr]:
+        if not self.op_contracts[self.opptr]:
             return "Missing context"
 
         if track is None:
             track = self.srctrack
 
         try:
-            self.srcptr, txt = opSource(self.contract_stack[self.cptr], op, self.srcptr, track=track)
+            self.srcptr, txt = opSource(self.op_contracts[self.opptr], op, self.srcptr, track=track)
             return txt
         except SourceException:
             return self.source_view.text
 
     def getHelp(self):
         return """Key navigation
-        a: Trace up        s: Mem up     d: Stack up    f: Source up    t: track source on/off
-        z: Trace down      x: Mem down   c: Stack down  v: Source down      Use uppercase for large steps
+        a: Trace up        s: Mem up     d: Stack up    f: Source up    t: track source on/off    m: write data to snapshot file
+        z: Trace down      x: Mem down   c: Stack down  v: Source down  Use uppercase for large steps
     press `q` to quit
         """
+
     def _refresh(self):
         self.source_view.set_text(self.getSource()) # needs to occur before getOp to print correct addr
         self.ops_view.set_text(self.getOp())
         self.trace_view.set_text(self.getTrace())
         self.mem_view.set_text(self.getMem())
+        self.memref_view.set_text(self.getMemref())
         self.stack_view.set_text(self.getStack())
+        self.help_view.set_text(self.getHelp())
 
     def dbg(self,text):
         if self.help_view is not None:
@@ -597,50 +679,50 @@ class DebugViewer():
         if key in ('q', 'Q'):
             raise urwid.ExitMainLoop()
 
-        self.step = 1
-        if key in ('A','Z','S','X','D','C','F','V'):
-            self.step = 10
+        step = 1
+        if key in ('A','Z'):
+            step = 10 if len(self.operations) <= 1000 else 100
+        elif key in ('S','X','D','C','F','V'):
+            step = 10
 
         # UP trace
         if key in ('a','A'):
-            self.opptr = max(0, self.opptr-self.step)
-            self.forward = False
+            self.opptr = max(0, self.opptr-step)
             self._refresh()
 
         # DOWN trace
         if key in ('z','Z'):
-            self.opptr = min(self.opptr+self.step, len(self.operations)-1)
-            self.forward = True
+            self.opptr = min(self.opptr+step, len(self.operations)-1)
             self._refresh()
 
         # UP mem
         if key in ('s','S'):
-            self.memptr = max(0, self.memptr-self.step)
+            self.memptr = max(0, self.memptr-step)
             self.mem_view.set_text(self.getMem())
 
         # DOWN mem
         if key in ('x','X'):
-            self.memptr = self.memptr+self.step
+            self.memptr = self.memptr+step
             self.mem_view.set_text(self.getMem())
 
         # UP stack
         if key in ('d','D'):
-            self.stackptr = max(0, self.stackptr-self.step)
+            self.stackptr = max(0, self.stackptr-step)
             self.stack_view.set_text(self.getStack())
 
         # DOWN stack
         if key in ('c','C'):
-            self.stackptr = self.stackptr+self.step
+            self.stackptr = self.stackptr+step
             self.stack_view.set_text(self.getStack())
 
         # UP source
         if key in ('f','F'):
-            self.srcptr = max(0, self.srcptr-self.step)
+            self.srcptr = max(0, self.srcptr-step)
             self.source_view.set_text(self.getSource(track=False))
 
         # DOWN source
         if key in ('v','V'):
-            self.srcptr = self.srcptr+self.step
+            self.srcptr = self.srcptr+step
             self.source_view.set_text(self.getSource(track=False))
 
         if key in ('t', 'T'):
@@ -651,6 +733,22 @@ class DebugViewer():
 
         if key in ('g','G'):
             self.dbg("TODO: Implement GOTO")
+
+        if key in ('m','M'):
+            snap_name = OUTPUT_DIR + "state.snapshot" + str(self.snapn) + ".txt"
+            ops = "".join(str(e[0][1] + e[1]) for e in self.getOp())
+            try:
+                sf = open(snap_name, "w")
+                dumpArea(sf, "OP STATE", str(ops))
+                dumpArea(sf, "TRACE", self.getTrace())
+                dumpArea(sf, "MEMORY REFERENCE", self._getMemref(0))
+                dumpArea(sf, "MEMORY DUMP", self.getMem())
+                dumpArea(sf, "STACK", self.getStack())
+                sf.close()
+                self.dbg("Saved snapshot to %s" % snap_name)
+            except Exception as e:
+                self.dbg(str(e))
+            self.snapn += 1
 
 
 def loadJsonDebugStackTrace(fname):
@@ -681,7 +779,7 @@ def loadJsonDebugStackTrace(fname):
 
 def loadJsonObjects(fname):
     """Load the json from geth `evm`"""
-    print("Trying to load geth format")
+    print("Trying to load %s in geth format" % fname)
     ops = []
 
     with open(fname) as f:
@@ -746,7 +844,7 @@ def main(args):
             ops = loadWeirdJson(fname)
 
 
-    contract_stack = []
+    op_contracts = []
     if args.json:
         if not args.hash:
             parser.error('hash is required if contract json is provided')
@@ -763,10 +861,10 @@ def main(args):
 
             for contract in combined['contracts'].keys():
                 val = combined['contracts'][contract]
-                c = Contract(sources, val)
+                c = Contract(sources, val, contract)
                 contracts.append(c)
 
-        contract_stack = buildContexts(ops, api, contracts, args.hash)
+        op_contracts = buildContexts(ops, api, contracts, args.hash)
 
     if vm:
         print("\nTo view the generated trace:\n")
@@ -775,7 +873,7 @@ def main(args):
             cmd += " --web3 %s -s %s -j %s --hash %s" % (args.web3, args.source, args.json, args.hash)
         print(cmd)
 
-    DebugViewer().setTrace(ops, contract_stack)
+    DebugViewer().setTrace(ops, op_contracts)
 
 if __name__ == '__main__':
     options = parser.parse_args()
