@@ -175,7 +175,7 @@ class Program():
 		self.getattest = lambda x,y: self.push(y).push(x).op(GETATTEST)
 		self.getrevoke = lambda x,y: self.push(y).push(x).op(GETREVOKE)
 		self.checkattestvalid = lambda x,y: self.push(y).push(x).op(CHECKATTESTVALID)
-		self.merkleprove = lambda proofLocation, proofLen, leaf, root: self.push(root).push(leaf).push(proofLen).push(proofLocation).op(MERKLEPROVE)
+		self.merkleprove = lambda proofLocation, leaf, root: self.push(root).push(leaf).push(proofLocation).op(MERKLEPROVE)
 		self.sha3 = lambda start, end: self.push(end).push(start).op(SHA3)
 
 		

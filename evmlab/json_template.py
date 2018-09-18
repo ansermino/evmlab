@@ -32,7 +32,7 @@ def get_json(bytecode, start_gas, end_gas, test_name, input_data=0x00, return_va
         },
         "gas" : format(end_gas, HEX_FORMAT),
         "logs" : "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
-        "out" : "0x0000000000000000000000000000000000000000000000000000000000000001" if return_val is True else "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "out" : "0x01" if return_val is True else "0x00",
         "post" : {
           "0x0f572e5295c57f15886f9b263e2f6d2d6c7b5ec6" : {
             "balance" : format(end_gas, HEX_FORMAT),
